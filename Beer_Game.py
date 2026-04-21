@@ -8,6 +8,7 @@ Created on Wed Apr 15 15:29:31 2026
 import streamlit as st
 import pandas as pd
 import altair as alt
+import random
 
 # 1. 페이지 설정
 st.set_page_config(page_title="Beer Game - Strategic Board", layout="wide")
