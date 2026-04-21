@@ -60,19 +60,22 @@ class BeerGameChain:
         }
         
         for role in self.roles:
-            # 기초 재고 기록 (계산 전 상태)
             initial_stock = self.nodes[role].inventory if self.nodes[role].backorder == 0 else -self.nodes[role].backorder
-            
             res = self.nodes[role].calculate_step(current_inputs[role]["demand"], current_inputs[role]["supply"])
-            order_decision = user_order if role == user_role else current_inputs[role]["demand"]
             
-            # 비용 계산
+            # --- 알고리즘 수정 부분 ---
+            if role == user_role:
+                order_decision = user_order
+            else:
+                # 컴퓨터 알고리즘: 받은 주문량(demand) + (0~20 사이의 난수)
+                noise = random.randint(0, 20)
+                order_decision = current_inputs[role]["demand"] + noise
+            # ------------------------
+            
             weekly_cost = res["Inv"] * 1 + res["Back"] * 2
             
-            # 회계 장부(Accounting Sheet) 형식에 맞춘 데이터 구조
             res.update({
-                "Week": week,
-                "Role": role,
+                "Week": week, "Role": role,
                 "C1_Initial": initial_stock,
                 "C2_Arrived": current_inputs[role]["supply"],
                 "C3_NewOrder": current_inputs[role]["demand"],
