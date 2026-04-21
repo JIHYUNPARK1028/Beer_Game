@@ -10,13 +10,13 @@ import pandas as pd
 import altair as alt
 
 # 1. 페이지 설정
-st.set_page_config(page_title="Beer Game Visual Board", layout="wide")
+st.set_page_config(page_title="Beer Game - Strategic Board", layout="wide")
 
 # --- 상수 데이터 ---
 CUSTOMER_ORDERS = [4, 4, 10, 8, 9, 8, 8, 10, 4, 4, 5, 3, 8, 8, 9, 8, 7, 8, 10, 11, 8, 7, 8, 10, 7, 7, 8, 7, 10, 9]
 MAX_WEEKS = len(CUSTOMER_ORDERS)
 
-# --- 로직 클래스 (이전과 동일하되 시각화 데이터 보강) ---
+# --- 로직 클래스 ---
 class BeerGameNode:
     def __init__(self, role_name):
         self.role_name = role_name
@@ -46,15 +46,11 @@ class BeerGameChain:
             "Distributor": {"demand": self.order_delay["Distributor"].pop(0), "supply": self.supply_delay["Distributor"].pop(0)},
             "Factory": {"demand": self.order_delay["Factory"].pop(0), "supply": self.supply_delay["Factory"].pop(0)}
         }
-
         for role in self.roles:
             res = self.nodes[role].calculate_step(current_inputs[role]["demand"], current_inputs[role]["supply"])
             order_decision = user_order if role == user_role else current_inputs[role]["demand"]
-            
-            res.update({"C6_Order": order_decision, "Role": role, "Week": week, 
-                        "C3_Demand": current_inputs[role]["demand"], "C2_Arrived": current_inputs[role]["supply"]})
+            res.update({"C6_Order": order_decision, "Role": role, "Week": week, "C3_Demand": current_inputs[role]["demand"], "C2_Arrived": current_inputs[role]["supply"]})
             results[role] = res
-
             if role == "Retailer": self.order_delay["Wholesaler"].append(order_decision)
             elif role == "Wholesaler":
                 self.order_delay["Distributor"].append(order_decision); self.supply_delay["Retailer"].append(res["Shipment"])
@@ -70,85 +66,72 @@ if "chain" not in st.session_state:
     st.session_state.history = []
     st.session_state.week = 1
 
-# --- 스타일 정의 (사진의 레이아웃 재현) ---
-def render_visual_board(chain, user_role):
+# --- 스타일 정의 (사진의 레이아웃 + 보안 적용) ---
+def render_fog_of_war_board(chain, user_role):
     cols = st.columns(4)
+    # 사진의 이미지 순서와 동일: Retailer -> Wholesaler -> Distributor -> Factory
     colors = {"Retailer": "#0056b3", "Wholesaler": "#28a745", "Distributor": "#333", "Factory": "#dc3545"}
     
     for i, role in enumerate(chain.roles):
         node = chain.nodes[role]
         color = colors[role]
-        is_user = " (YOU)" if role == user_role else ""
+        is_me = (role == user_role)
         
         with cols[i]:
-            # 사진의 각 노드 박스 디자인 구현
+            # 나만 볼 수 있는 데이터 처리
+            display_inv = f"{node.inventory if node.backorder == 0 else -node.backorder}" if is_me else "???"
+            display_incoming = ""
+            if role == 'Retailer':
+                display_incoming = f"{CUSTOMER_ORDERS[st.session_state.week-1]}"
+            else:
+                display_incoming = f"{chain.order_delay[role][0]}" if is_me else "???"
+            
+            display_truck = f"{chain.supply_delay[role][1]}" if is_me else "?"
+            display_train = f"{chain.supply_delay[role][0]}" if is_me else "?"
+
             st.markdown(f"""
-                <div style="border: 3px solid {color}; border-radius: 10px; padding: 15px; text-align: center; background-color: white;">
-                    <h3 style="color: {color}; margin-bottom: 5px;">{role.upper()}{is_user}</h3>
-                    <div style="display: flex; justify-content: space-around; margin-bottom: 10px;">
-                        <div style="font-size: 0.8em; color: gray;">ORDERS PLACED<br><b style="color:red; font-size:1.5em;">{chain.order_delay.get(chain.roles[i+1] if i<3 else "", [0,0])[-1] if i<3 else "-"}</b></div>
-                        <div style="font-size: 0.8em; color: gray;">INCOMING ORDERS<br><b style="color:red; font-size:1.5em;">{chain.order_delay.get(role, [0,0])[0] if role != 'Retailer' else CUSTOMER_ORDERS[st.session_state.week-1]}</b></div>
+                <div style="border: 4px solid {color if is_me else '#ddd'}; border-radius: 12px; padding: 20px; text-align: center; background-color: {'#fff' if is_me else '#f1f1f1'}; opacity: {1.0 if is_me else 0.6};">
+                    <h2 style="color: {color if is_me else '#888'}; margin-bottom: 5px;">{role.upper()}</h2>
+                    <p style="font-size: 0.8em; color: gray;">{"(나의 역할)" if is_me else "(상대방)"}</p>
+                    <hr>
+                    <div style="margin-bottom: 15px;">
+                        <span style="font-size: 0.85em; color: #555;">📥 이번 주 받은 주문</span><br>
+                        <b style="font-size: 1.8em; color: red;">{display_incoming}</b>
                     </div>
-                    <div style="background-color: #f8f9fa; border: 2px solid #ddd; padding: 10px; margin-bottom: 10px;">
-                        <span style="font-size: 0.9em;">CURRENT INVENTORY</span><br>
-                        <b style="font-size: 2.5em; color: {color};">{node.inventory if node.backorder == 0 else -node.backorder}</b>
+                    <div style="background-color: {'#eef' if is_me else '#eee'}; border: 2px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                        <span style="font-size: 0.9em; font-weight: bold;">현재 재고 현황</span><br>
+                        <b style="font-size: 3em; color: {color if is_me else '#888'};">{display_inv}</b>
                     </div>
-                    <div style="display: flex; justify-content: space-around;">
-                        <div style="font-size: 0.8em; color: gray;">TRUCK. DELAY<br><b style="color:blue; font-size:1.2em;">{chain.supply_delay[role][1]}</b></div>
-                        <div style="font-size: 0.8em; color: gray;">TRAIN. DELAY<br><b style="color:blue; font-size:1.2em;">{chain.supply_delay[role][0]}</b></div>
+                    <div style="display: flex; justify-content: space-around; border-top: 1px solid #ddd; padding-top: 10px;">
+                        <div><small>Truck Delay</small><br><b style="color:blue;">{display_truck}</b></div>
+                        <div><small>Train Delay</small><br><b style="color:blue;">{display_train}</b></div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-# --- 메인 화면 구성 ---
-st.sidebar.title("⚙️ SETTINGS")
-user_role = st.sidebar.selectbox("역할 선택", ["Retailer", "Wholesaler", "Distributor", "Factory"])
-if st.sidebar.button("게임 초기화"):
+# --- 사이드바 설정 ---
+st.sidebar.header("🎮 GAME SETTINGS")
+user_role = st.sidebar.radio("자신의 역할을 선택하세요", ["Retailer", "Wholesaler", "Distributor", "Factory"])
+if st.sidebar.button("게임 리셋"):
     st.session_state.chain = BeerGameChain(); st.session_state.history = []; st.session_state.week = 1; st.rerun()
 
-st.title(f"🍻 Beer Game Simulation - Week {st.session_state.week}")
+# --- 메인 화면 ---
+st.title("🍺 Beer Game Board Simulation")
+st.info(f"📅 **Week {st.session_state.week}** / {MAX_WEEKS}")
 
-# 상단 비주얼 보드판 출력
-render_visual_board(st.session_state.chain, user_role)
+# 상단 비주얼 보드판 (포그 오브 워 적용)
+render_fog_of_war_board(st.session_state.chain, user_role)
 
 st.divider()
 
-# 의사결정 및 입력 섹션
+# 하단 인터랙션 영역
 if st.session_state.week <= MAX_WEEKS:
-    c_demand = CUSTOMER_ORDERS[st.session_state.week - 1]
-    
-    col_input, col_info = st.columns([1, 2])
-    with col_input:
-        st.subheader("📝 주문 결정")
-        order_val = st.number_input("이번 주 발주 수량(C6):", min_value=0, value=4, step=1)
-        if st.button("결정 완료", use_container_width=True):
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.subheader("📝 주문 의사결정")
+        order_val = st.number_input(f"{user_role}의 이번 주 발주량:", min_value=0, value=4)
+        if st.button("주문 확정 (Next Week)", use_container_width=True, type="primary"):
+            c_demand = CUSTOMER_ORDERS[st.session_state.week - 1]
             res = st.session_state.chain.proceed_week(st.session_state.week, user_role, order_val, c_demand)
             st.session_state.history.append(res)
             st.session_state.week += 1
-            st.rerun()
-    
-    with col_info:
-        st.subheader("💡 현재 상황 요약")
-        my_node = st.session_state.chain.nodes[user_role]
-        if user_role == "Retailer":
-            st.warning(f"이번 주 소비자 주문(C3)은 **{c_demand} PKG** 입니다.")
-        else:
-            in_demand = st.session_state.chain.order_delay[user_role][0]
-            st.info(f"이번 주 하위 단계로부터의 주문(C3)은 **{in_demand} PKG** 입니다.")
-        
-        if my_node.backorder > 0:
-            st.error(f"⚠️ 현재 **{my_node.backorder} PKG**의 미납 주문이 발생했습니다! 빠른 배송이 필요합니다.")
-
-# 데이터 시각화 (기존 탭 구조 유지)
-if st.session_state.history:
-    flat_data = [d for w in st.session_state.history for d in w.values()]
-    df = pd.DataFrame(flat_data)
-    
-    tab1, tab2 = st.tabs(["📉 전체 공급망 주문 추이", "📋 상세 장부 기록"])
-    with tab1:
-        chart = alt.Chart(df).mark_line(point=True).encode(
-            x='Week:O', y='C6_Order:Q', color='Role:N', tooltip=['Role', 'Week', 'C6_Order']
-        ).properties(height=400)
-        st.altair_chart(chart, use_container_width=True)
-    with tab2:
-        st.dataframe(df[df['Role'] == user_role])
