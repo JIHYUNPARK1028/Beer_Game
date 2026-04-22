@@ -1,158 +1,146 @@
 import streamlit as st
 import pandas as pd
-import altair as alt
 import random
 
-# 1. 페이지 설정 및 디자인 CSS
-st.set_page_config(page_title="Interactive Beer Game", layout="wide")
+# 1. 페이지 설정
+st.set_page_config(page_title="Beer Game Pro", layout="wide")
 
+# --- CSS: 개별 박스 디자인 및 장부 스타일 ---
 st.markdown("""
     <style>
-    .element-container { margin-bottom: 1rem; }
-    .stButton>button { width: 100%; border-radius: 20px; }
-    /* 보드판 개별 박스 스타일 */
-    .board-box {
-        border-radius: 10px;
-        padding: 15px;
-        margin: 5px 0;
-        text-align: center;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    .board-title { text-align: center; font-weight: bold; margin-bottom: 10px; }
+    .unit-box {
+        border-radius: 10px; padding: 15px; margin: 5px 0;
+        text-align: center; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        min-height: 100px; display: flex; flex-direction: column; justify-content: center;
     }
-    .order-card { background-color: #fff5f5; border: 2px dashed #ff4b4b; }
-    .inv-card { background-color: #e7f3ff; border: 3px solid #1f77b4; }
-    .ship-card { background-color: #f0fff0; border: 2px solid #2ca02c; }
-    .label { font-size: 0.8em; color: #666; font-weight: bold; }
-    .value { font-size: 2em; font-weight: bold; }
+    .order-style { background-color: #fff5f5; border: 2px dashed #ff4b4b; color: #d62728; }
+    .inv-style { background-color: #e7f3ff; border: 3px solid #1f77b4; color: #1f77b4; }
+    .ship-style { background-color: #f0fff0; border: 2px solid #2ca02c; color: #2ca02c; }
+    .label-text { font-size: 0.85em; color: #555; font-weight: bold; margin-bottom: 5px; }
+    .value-text { font-size: 2.2em; font-weight: bold; }
+    
+    /* 장부 스타일: 빈 칸 느낌 강조 */
+    .stTable td { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 로직 클래스 (기존 로직 유지) ---
-class BeerGameNode:
-    def __init__(self, role_name):
-        self.role_name = role_name
-        self.inventory = 8
-        self.backorder = 0
-
-    def calculate_step(self, incoming_order, arrived_supply):
-        self.inventory += arrived_supply
-        total_demand = incoming_order + self.backorder
-        actual_ship = min(self.inventory, total_demand)
-        self.inventory -= actual_ship
-        self.backorder = total_demand - actual_ship
-        return {"Shipment": actual_ship, "Inv": self.inventory, "Back": self.backorder}
-
+# --- 2. 로직 클래스 (통합본) ---
 class BeerGameChain:
     def __init__(self):
         self.roles = ["Retailer", "Wholesaler", "Distributor", "Factory"]
-        self.nodes = {role: BeerGameNode(role) for role in self.roles}
-        self.order_delay = {"Wholesaler": [4, 4], "Distributor": [4, 4], "Factory": [4, 4]}
-        self.supply_delay = {"Retailer": [4, 4], "Wholesaler": [4, 4], "Distributor": [4, 4], "Factory": [4, 4]}
+        self.inventory = {role: 8 for role in self.roles}
+        self.backorder = {role: 0 for role in self.roles}
+        self.order_delay = {r: [4, 4] for r in ["Wholesaler", "Distributor", "Factory"]}
+        self.supply_delay = {r: [4, 4] for r in self.roles}
+        # 30주차 전체 장부 미리 생성 (None으로 초기화)
+        self.full_history = {role: pd.DataFrame(index=range(1, 31), 
+                            columns=['C1_Initial', 'C2_Arrived', 'C3_NewOrder', 'C4_Final', 'C5_OrderDec']) 
+                            for role in self.roles}
 
     def proceed_week(self, week, user_role, user_order, consumer_demand):
-        results = {}
         inputs = {
             "Retailer": {"d": consumer_demand, "s": self.supply_delay["Retailer"].pop(0)},
             "Wholesaler": {"d": self.order_delay["Wholesaler"].pop(0), "s": self.supply_delay["Wholesaler"].pop(0)},
             "Distributor": {"d": self.order_delay["Distributor"].pop(0), "s": self.supply_delay["Distributor"].pop(0)},
             "Factory": {"d": self.order_delay["Factory"].pop(0), "s": self.supply_delay["Factory"].pop(0)}
         }
+        
+        current_results = {}
         for role in self.roles:
-            init_stock = self.nodes[role].inventory if self.nodes[role].backorder == 0 else -self.nodes[role].backorder
-            res = self.nodes[role].calculate_step(inputs[role]["d"], inputs[role]["s"])
+            # 1. 기초 재고 기록
+            c1 = self.inventory[role] if self.backorder[role] == 0 else -self.backorder[role]
+            
+            # 2. 로직 계산
+            self.inventory[role] += inputs[role]["s"]
+            total_demand = inputs[role]["d"] + self.backorder[role]
+            actual_ship = min(self.inventory[role], total_demand)
+            self.inventory[role] -= actual_ship
+            self.backorder[role] = total_demand - actual_ship
+            
+            c4 = self.inventory[role] if self.backorder[role] == 0 else -self.backorder[role]
             order_dec = user_order if role == user_role else inputs[role]["d"] + random.randint(0, 20)
             
-            res.update({
-                "Week": week, "Role": role, "C1_Initial": init_stock, "C2_Arrived": inputs[role]["s"],
-                "C3_NewOrder": inputs[role]["d"], "C4_Final": (res["Inv"] if res["Back"]==0 else -res["Back"]),
-                "C5_OrderDec": order_dec, "Weekly_Cost": res["Inv"]*1 + res["Back"]*2
-            })
-            results[role] = res
+            # 3. 미리 생성된 DataFrame의 해당 주차(week) 행 채우기
+            self.full_history[role].at[week, 'C1_Initial'] = c1
+            self.full_history[role].at[week, 'C2_Arrived'] = inputs[role]["s"]
+            self.full_history[role].at[week, 'C3_NewOrder'] = inputs[role]["d"]
+            self.full_history[role].at[week, 'C4_Final'] = c4
+            self.full_history[role].at[week, 'C5_OrderDec'] = order_dec
             
-            if role == "Retailer": self.order_delay["Wholesaler"].append(order_dec)
-            elif role == "Wholesaler":
-                self.order_delay["Distributor"].append(order_dec); self.supply_delay["Retailer"].append(res["Shipment"])
-            elif role == "Distributor":
-                self.order_delay["Factory"].append(order_dec); self.supply_delay["Wholesaler"].append(res["Shipment"])
-            elif role == "Factory":
-                self.supply_delay["Distributor"].append(res["Shipment"]); self.supply_delay["Factory"].append(order_dec)
-        return results
+            current_results[role] = actual_ship
+            
+        # 물류 및 정보 흐름 업데이트
+        self.order_delay["Wholesaler"].append(self.full_history["Retailer"].at[week, 'C5_OrderDec'])
+        self.order_delay["Distributor"].append(self.full_history["Wholesaler"].at[week, 'C5_OrderDec'])
+        self.order_delay["Factory"].append(self.full_history["Distributor"].at[week, 'C5_OrderDec'])
+        
+        self.supply_delay["Retailer"].append(current_results["Wholesaler"])
+        self.supply_delay["Wholesaler"].append(current_results["Distributor"])
+        self.supply_delay["Distributor"].append(current_results["Factory"])
+        self.supply_delay["Factory"].append(self.full_history["Factory"].at[week, 'C5_OrderDec'])
 
-# --- 3. 데이터 및 세션 ---
+# --- 3. 세션 초기화 ---
 CUSTOMER_ORDERS = [4, 4, 10, 8, 9, 8, 8, 10, 4, 4, 5, 3, 8, 8, 9, 8, 7, 8, 10, 11, 8, 7, 8, 10, 7, 7, 8, 7, 10, 9]
 if "chain" not in st.session_state:
     st.session_state.chain = BeerGameChain()
-    st.session_state.history = []
     st.session_state.week = 1
-    st.session_state.step = 0 # 인터렉티브 단계를 위한 변수
 
-# --- 4. 메인 화면 ---
-st.title("🍺 Beer Game: Interactive Board")
+# --- 4. 메인 인터페이스 ---
+st.title("🍺 Beer Game: Professional Research Board")
+user_role = st.sidebar.selectbox("내 역할", ["Retailer", "Wholesaler", "Distributor", "Factory"])
+if st.sidebar.button("시뮬레이션 초기화"):
+    st.session_state.chain = BeerGameChain(); st.session_state.week = 1; st.rerun()
 
-user_role = st.sidebar.selectbox("내 역할 선택", ["Retailer", "Wholesaler", "Distributor", "Factory"])
-if st.sidebar.button("게임 리셋"):
-    st.session_state.chain = BeerGameChain(); st.session_state.history = []; st.session_state.week = 1; st.session_state.step = 0; st.rerun()
+is_finished = st.session_state.week > 30
 
-is_finished = st.session_state.week > len(CUSTOMER_ORDERS)
-
-# --- 5. 보드판 렌더링 (개별 박스 분리) ---
+# --- 보드판 구역 (완전 분리형 박스) ---
 cols = st.columns(4)
-colors = {"Retailer": "#0056b3", "Wholesaler": "#28a745", "Distributor": "#333", "Factory": "#d62728"}
+role_colors = {"Retailer": "#0056b3", "Wholesaler": "#28a745", "Distributor": "#333", "Factory": "#d62728"}
 
 for i, role in enumerate(st.session_state.chain.roles):
-    node = st.session_state.chain.nodes[role]
     is_me = (role == user_role) or is_finished
-    
     with cols[i]:
-        st.markdown(f"<h3 style='text-align:center; color:{colors[role]};'>{role.upper()}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div class='board-title' style='color:{role_colors[role]}'>{role.upper()}</div>", unsafe_allow_html=True)
         
-        # 1. Incoming Order Box
-        inc_order = "END" if is_finished else (CUSTOMER_ORDERS[st.session_state.week-1] if role=="Retailer" else st.session_state.chain.order_delay[role][0])
-        st.markdown(f"<div class='board-box order-card'><div class='label'>INCOMING ORDER</div><div class='value'>{inc_order if is_me else '???'}</div></div>", unsafe_allow_html=True)
+        # 1. Incoming Order
+        val_order = "END" if is_finished else (CUSTOMER_ORDERS[st.session_state.week-1] if role=="Retailer" else st.session_state.chain.order_delay[role][0])
+        st.markdown(f"<div class='unit-box order-style'><div class='label-text'>INCOMING ORDER</div><div class='value-text'>{val_order if is_me else '???'}</div></div>", unsafe_allow_html=True)
         
-        # 2. Inventory Box
-        stock = node.inventory if node.backorder == 0 else -node.backorder
-        st.markdown(f"<div class='board-box inv-card'><div class='label'>INVENTORY</div><div class='value'>{stock if is_me else '???'}</div></div>", unsafe_allow_html=True)
+        # 2. Inventory
+        curr_inv = st.session_state.chain.inventory[role] if st.session_state.chain.backorder[role] == 0 else -st.session_state.chain.backorder[role]
+        st.markdown(f"<div class='unit-box inv-style'><div class='label-text'>INVENTORY</div><div class='value-text'>{curr_inv if is_me else '???'}</div></div>", unsafe_allow_html=True)
         
-        # 3. Shipments (Truck/Train) 분리
-        t_col1, t_col2 = st.columns(2)
-        with t_col1:
-            st.markdown(f"<div class='board-box ship-card'><div class='label'>TRUCK</div><div class='value' style='font-size:1.2em;'>{st.session_state.chain.supply_delay[role][1] if is_me else '?'}</div></div>", unsafe_allow_html=True)
-        with t_col2:
-            st.markdown(f"<div class='board-box ship-card'><div class='label'>TRAIN</div><div class='value' style='font-size:1.2em;'>{st.session_state.chain.supply_delay[role][0] if is_me else '?'}</div></div>", unsafe_allow_html=True)
+        # 3. Truck & Train (Shipments)
+        s1, s2 = st.columns(2)
+        with s1: st.markdown(f"<div class='unit-box ship-style'><div class='label-text'>TRUCK</div><div class='value-text' style='font-size:1.5em'>{st.session_state.chain.supply_delay[role][1] if is_me else '?'}</div></div>", unsafe_allow_html=True)
+        with s2: st.markdown(f"<div class='unit-box ship-style'><div class='label-text'>TRAIN</div><div class='value-text' style='font-size:1.5em'>{st.session_state.chain.supply_delay[role][0] if is_me else '?'}</div></div>", unsafe_allow_html=True)
 
 st.divider()
 
-# --- 6. 인터렉티브 제어 구역 (단계별 진행) ---
+# --- 5. 인터렉티브 제어 구역 ---
 if not is_finished:
-    st.subheader(f"📅 Week {st.session_state.week} - 진행 단계")
-    
-    # 실제 보드판 게임처럼 단계별로 확인하도록 구성
-    step_cols = st.columns(3)
-    
-    with step_cols[0]:
-        check_arrived = st.checkbox("1. 배송 도착 확인 (Truck/Train)", key="s1")
-        if check_arrived: st.info("물건이 창고에 입고되었습니다.")
+    c_ctl, c_space = st.columns([1, 2])
+    with c_ctl:
+        st.subheader(f"📅 Week {st.session_state.week} Action")
         
-    with step_cols[1]:
-        check_order = st.checkbox("2. 새 주문 확인 (Incoming Order)", key="s2", disabled=not check_arrived)
-        if check_order: st.warning(f"이번 주 수요는 {inc_order}개 입니다.")
+        # 단계별 인터렉션
+        step1 = st.checkbox("🚚 1. 물류 입고 확인 (Truck/Train)")
+        step2 = st.checkbox("📩 2. 새로운 주문 확인", disabled=not step1)
         
-    with step_cols[2]:
-        if check_order:
-            st.write("3. 발주 결정 (Order Placed)")
-            order_val = st.slider("수량을 선택하세요", 0, 50, 4)
-            if st.button("물건 보내기 및 주문 완료", type="primary"):
-                res = st.session_state.chain.proceed_week(st.session_state.week, user_role, order_val, CUSTOMER_ORDERS[st.session_state.week-1])
-                st.session_state.history.append(res)
+        if step2:
+            st.write("📈 3. 발주 수량 결정")
+            order_input = st.select_slider("결정량 선택", options=list(range(0, 51)), value=4)
+            if st.button("물건 발송 및 주차 종료", type="primary"):
+                st.session_state.chain.proceed_week(st.session_state.week, user_role, order_input, CUSTOMER_ORDERS[st.session_state.week-1])
                 st.session_state.week += 1
                 st.rerun()
-        else:
-            st.write("앞의 단계를 먼저 진행하세요.")
 
-    # 하단 회계 장부
-    with st.expander("📊 실시간 회계 장부 확인", expanded=True):
-        if st.session_state.history:
-            my_data = [w[user_role] for w in st.session_state.history]
-            df = pd.DataFrame(my_data)[['Week', 'C1_Initial', 'C2_Arrived', 'C3_NewOrder', 'C4_Final', 'C5_OrderDec']]
-            df.columns = ['주차', '기초재고', '배송입고', '받은주문', '기말재고', '나의발주']
-            st.table(df.sort_values('주차', ascending=False).head(5))
+# --- 6. 전면 회계 장부 (30주차 전체 노출) ---
+st.subheader(f"📋 {user_role} Full Accounting Sheet (Week 1-30)")
+display_df = st.session_state.chain.full_history[user_role].copy()
+display_df.index.name = "Week"
+display_df.columns = ["기초재고(C1)", "배송도착(C2)", "새 주문(C3)", "기말재고(C4)", "주문결정(C5)"]
+
+# 데이터가 없는 곳은 빈칸으로 표시되도록 처리
+st.table(display_df.fillna(""))
