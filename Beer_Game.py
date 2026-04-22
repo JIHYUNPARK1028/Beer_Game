@@ -3,65 +3,30 @@ import pandas as pd
 import altair as alt
 import random
 
-# 1. 페이지 설정 및 스타일 정의
-st.set_page_config(page_title="Beer Game Virtual Board", layout="wide")
+# 1. 페이지 설정 및 디자인 CSS
+st.set_page_config(page_title="Interactive Beer Game", layout="wide")
 
-# CSS 스타일 정의 (HTML 렌더링용)
-board_style = """
-<style>
-    .node-container {
-        border: 4px solid #333;
-        border-radius: 15px;
-        background-color: #fcfcfc;
+st.markdown("""
+    <style>
+    .element-container { margin-bottom: 1rem; }
+    .stButton>button { width: 100%; border-radius: 20px; }
+    /* 보드판 개별 박스 스타일 */
+    .board-box {
+        border-radius: 10px;
         padding: 15px;
+        margin: 5px 0;
         text-align: center;
-        min-height: 480px;
-        box-shadow: 4px 4px 10px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
     }
-    .section-label {
-        font-size: 0.75em;
-        font-weight: bold;
-        color: #666;
-        margin-bottom: 5px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    .data-box {
-        border: 2px solid #ddd;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 15px;
-        background-color: white;
-    }
-    .inv-value {
-        font-size: 3em;
-        font-weight: bold;
-        color: #1f77b4;
-        line-height: 1.2;
-    }
-    .order-value {
-        font-size: 2.2em;
-        font-weight: bold;
-        color: #d62728;
-    }
-    .delay-box {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-    }
-    .delay-item {
-        flex: 1;
-        border: 1px solid #eee;
-        border-radius: 5px;
-        padding: 8px;
-        background-color: #f9f9f9;
-    }
-</style>
-"""
-st.markdown(board_style, unsafe_allow_html=True)
+    .order-card { background-color: #fff5f5; border: 2px dashed #ff4b4b; }
+    .inv-card { background-color: #e7f3ff; border: 3px solid #1f77b4; }
+    .ship-card { background-color: #f0fff0; border: 2px solid #2ca02c; }
+    .label { font-size: 0.8em; color: #666; font-weight: bold; }
+    .value { font-size: 2em; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 2. 로직 클래스 ---
+# --- 2. 로직 클래스 (기존 로직 유지) ---
 class BeerGameNode:
     def __init__(self, role_name):
         self.role_name = role_name
@@ -114,23 +79,22 @@ class BeerGameChain:
 
 # --- 3. 데이터 및 세션 ---
 CUSTOMER_ORDERS = [4, 4, 10, 8, 9, 8, 8, 10, 4, 4, 5, 3, 8, 8, 9, 8, 7, 8, 10, 11, 8, 7, 8, 10, 7, 7, 8, 7, 10, 9]
-MAX_WEEKS = len(CUSTOMER_ORDERS)
-
 if "chain" not in st.session_state:
     st.session_state.chain = BeerGameChain()
     st.session_state.history = []
     st.session_state.week = 1
+    st.session_state.step = 0 # 인터렉티브 단계를 위한 변수
 
-# --- 4. 인터페이스 구성 ---
-st.title("🍻 Beer Game Virtual Board")
+# --- 4. 메인 화면 ---
+st.title("🍺 Beer Game: Interactive Board")
 
 user_role = st.sidebar.selectbox("내 역할 선택", ["Retailer", "Wholesaler", "Distributor", "Factory"])
 if st.sidebar.button("게임 리셋"):
-    st.session_state.chain = BeerGameChain(); st.session_state.history = []; st.session_state.week = 1; st.rerun()
+    st.session_state.chain = BeerGameChain(); st.session_state.history = []; st.session_state.week = 1; st.session_state.step = 0; st.rerun()
 
-is_finished = st.session_state.week > MAX_WEEKS
+is_finished = st.session_state.week > len(CUSTOMER_ORDERS)
 
-# 보드판 렌더링 구역
+# --- 5. 보드판 렌더링 (개별 박스 분리) ---
 cols = st.columns(4)
 colors = {"Retailer": "#0056b3", "Wholesaler": "#28a745", "Distributor": "#333", "Factory": "#d62728"}
 
@@ -139,47 +103,54 @@ for i, role in enumerate(st.session_state.chain.roles):
     is_me = (role == user_role) or is_finished
     
     with cols[i]:
-        stock = node.inventory if node.backorder == 0 else -node.backorder
-        inc_order = "END" if is_finished else (CUSTOMER_ORDERS[st.session_state.week-1] if role=="Retailer" else st.session_state.chain.order_delay[role][0])
+        st.markdown(f"<h3 style='text-align:center; color:{colors[role]};'>{role.upper()}</h3>", unsafe_allow_html=True)
         
-        # HTML 코드를 명확히 unsafe_allow_html=True로 감싸서 출력
-        st.markdown(f"""
-            <div class="node-container" style="border-color: {colors[role] if is_me else '#ddd'};">
-                <div style="background-color:{colors[role]}; color:white; border-radius:5px; padding:8px; margin-bottom:15px;">
-                    <b style="font-size:1.3em;">{role.upper()}</b><br>
-                    <small>{'PLAYER' if role==user_role else 'COMPUTER'}</small>
-                </div>
-                
-                <div class="section-label">Incoming Orders (포스트잇)</div>
-                <div class="data-box"><span class="order-value">{inc_order if is_me else '???'}</span></div>
-                
-                <div class="section-label">Current Inventory (칩 더미)</div>
-                <div class="data-box"><span class="inv-value">{stock if is_me else '???'}</span></div>
-                
-                <div class="section-label">Incoming Shipments (물류 대기)</div>
-                <div class="delay-box">
-                    <div class="delay-item"><small>Truck</small><br><b>{st.session_state.chain.supply_delay[role][1] if is_me else '?'}</b></div>
-                    <div class="delay-item"><small>Train</small><br><b>{st.session_state.chain.supply_delay[role][0] if is_me else '?'}</b></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        # 1. Incoming Order Box
+        inc_order = "END" if is_finished else (CUSTOMER_ORDERS[st.session_state.week-1] if role=="Retailer" else st.session_state.chain.order_delay[role][0])
+        st.markdown(f"<div class='board-box order-card'><div class='label'>INCOMING ORDER</div><div class='value'>{inc_order if is_me else '???'}</div></div>", unsafe_allow_html=True)
+        
+        # 2. Inventory Box
+        stock = node.inventory if node.backorder == 0 else -node.backorder
+        st.markdown(f"<div class='board-box inv-card'><div class='label'>INVENTORY</div><div class='value'>{stock if is_me else '???'}</div></div>", unsafe_allow_html=True)
+        
+        # 3. Shipments (Truck/Train) 분리
+        t_col1, t_col2 = st.columns(2)
+        with t_col1:
+            st.markdown(f"<div class='board-box ship-card'><div class='label'>TRUCK</div><div class='value' style='font-size:1.2em;'>{st.session_state.chain.supply_delay[role][1] if is_me else '?'}</div></div>", unsafe_allow_html=True)
+        with t_col2:
+            st.markdown(f"<div class='board-box ship-card'><div class='label'>TRAIN</div><div class='value' style='font-size:1.2em;'>{st.session_state.chain.supply_delay[role][0] if is_me else '?'}</div></div>", unsafe_allow_html=True)
 
 st.divider()
 
-# 5. 하단 제어창 및 장부
+# --- 6. 인터렉티브 제어 구역 (단계별 진행) ---
 if not is_finished:
-    c_input, c_sheet = st.columns([1, 2])
-    with c_input:
-        st.subheader("🕹️ Decision")
-        order_val = st.number_input(f"Week {st.session_state.week} 발주량 결정:", min_value=0, value=4)
-        if st.button("주문 확정 (Confirm)", type="primary", use_container_width=True):
-            res = st.session_state.chain.proceed_week(st.session_state.week, user_role, order_val, CUSTOMER_ORDERS[st.session_state.week-1])
-            st.session_state.history.append(res)
-            st.session_state.week += 1
-            st.rerun()
+    st.subheader(f"📅 Week {st.session_state.week} - 진행 단계")
     
-    with c_sheet:
-        st.subheader("📋 My Accounting Sheet")
+    # 실제 보드판 게임처럼 단계별로 확인하도록 구성
+    step_cols = st.columns(3)
+    
+    with step_cols[0]:
+        check_arrived = st.checkbox("1. 배송 도착 확인 (Truck/Train)", key="s1")
+        if check_arrived: st.info("물건이 창고에 입고되었습니다.")
+        
+    with step_cols[1]:
+        check_order = st.checkbox("2. 새 주문 확인 (Incoming Order)", key="s2", disabled=not check_arrived)
+        if check_order: st.warning(f"이번 주 수요는 {inc_order}개 입니다.")
+        
+    with step_cols[2]:
+        if check_order:
+            st.write("3. 발주 결정 (Order Placed)")
+            order_val = st.slider("수량을 선택하세요", 0, 50, 4)
+            if st.button("물건 보내기 및 주문 완료", type="primary"):
+                res = st.session_state.chain.proceed_week(st.session_state.week, user_role, order_val, CUSTOMER_ORDERS[st.session_state.week-1])
+                st.session_state.history.append(res)
+                st.session_state.week += 1
+                st.rerun()
+        else:
+            st.write("앞의 단계를 먼저 진행하세요.")
+
+    # 하단 회계 장부
+    with st.expander("📊 실시간 회계 장부 확인", expanded=True):
         if st.session_state.history:
             my_data = [w[user_role] for w in st.session_state.history]
             df = pd.DataFrame(my_data)[['Week', 'C1_Initial', 'C2_Arrived', 'C3_NewOrder', 'C4_Final', 'C5_OrderDec']]
